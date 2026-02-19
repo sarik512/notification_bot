@@ -1,0 +1,15 @@
+# Telegram Bot Framework
+aiogram==3.10.0
+
+# Database
+aiosqlite==0.19.0
+
+# Scheduler
+apscheduler==3.10.4
+
+# Configuration
+python-dotenv==1.0.0
+
+# Additional utilities
+openpyxl==3.1.2
+# python-dateutil==2.8.2
