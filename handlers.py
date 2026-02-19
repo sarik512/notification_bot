@@ -751,13 +751,35 @@ async def show_statistics(message: types.Message):
     
     response = "📊 <b>Статистика</b>\n\n"
     response += f"👥 Всего клиентов: <b>{stats['total_clients']}</b>\n"
-    response += f"⚠️ Просроченных платежей: <b>{stats['overdue_count']}</b>\n"
+    response += f"⚠️ Просрочено платежей: <b>{stats['overdue_count']}</b>\n"
     response += f"📅 Платежей в этом месяце: <b>{stats['this_month_count']}</b>\n\n"
     
-    if stats['expected_amounts']:
-        response += "💰 <b>Ожидаемые суммы:</b>\n"
-        for currency, total in stats['expected_amounts'].items():
-            response += f"  • {utils.format_currency(total, currency)}\n"
+    # Financials
+    if stats['overdue_amounts']:
+        response += "🔴 <b>Общая задолженность:</b>\n"
+        for currency, total in stats['overdue_amounts'].items():
+            if total > 0:
+                response += f"  • {utils.format_currency(total, currency)}\n"
+        response += "\n"
+        
+    if stats['upcoming_amounts']:
+        response += "� <b>Ожидается в течение 30 дней:</b>\n"
+        for currency, total in stats['upcoming_amounts'].items():
+            if total > 0:
+                response += f"  • {utils.format_currency(total, currency)}\n"
+        response += "\n"
+
+    # Nearest payments
+    if stats['nearest_payments']:
+        response += "🕐 <b>Ближайшие оплаты:</b>\n"
+        for p in stats['nearest_payments']:
+            p_date = datetime.strptime(p['next_payment_date'], "%Y-%m-%d").date()
+            days = utils.get_days_until(p_date)
+            
+            day_str = "сегодня" if days == 0 else (f"через {days} дн" if days > 0 else f"просрочено {abs(days)} дн")
+            emoji = "🔴" if days < 0 else ("🟡" if days <= 3 else "🟢")
+            
+            response += f"{emoji} {p['name']}: {utils.format_currency(p['amount'], p['currency'])} ({day_str})\n"
     
     await message.answer(response, parse_mode="HTML")
     logger.info(f"User {message.from_user.id} viewed statistics")

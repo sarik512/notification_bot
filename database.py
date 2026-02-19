@@ -387,10 +387,35 @@ async def get_statistics(user_id: int) -> Dict[str, Any]:
             ) as cursor:
                 this_month_count = (await cursor.fetchone())['count']
             
+            # Overdue amounts
+            async with db.execute(
+                'SELECT SUM(amount) as total, currency FROM clients WHERE user_id = ? AND next_payment_date < ? GROUP BY currency',
+                (user_id, today)
+            ) as cursor:
+                overdue_amounts = await cursor.fetchall()
+
+            # Upcoming amounts (next 30 days)
+            future_date = (date.today() + timedelta(days=30)).isoformat()
+            async with db.execute(
+                'SELECT SUM(amount) as total, currency FROM clients WHERE user_id = ? AND next_payment_date >= ? AND next_payment_date <= ? GROUP BY currency',
+                (user_id, today, future_date)
+            ) as cursor:
+                upcoming_amounts = await cursor.fetchall()
+            
+            # Nearest 5 payments
+            async with db.execute(
+                'SELECT name, amount, currency, next_payment_date FROM clients WHERE user_id = ? AND next_payment_date >= ? ORDER BY next_payment_date LIMIT 5',
+                (user_id, today)
+            ) as cursor:
+                nearest_payments = await cursor.fetchall()
+
             return {
                 'total_clients': total_clients,
                 'overdue_count': overdue_count,
                 'expected_amounts': {row['currency']: row['total'] for row in amounts},
+                'overdue_amounts': {row['currency']: row['total'] for row in overdue_amounts},
+                'upcoming_amounts': {row['currency']: row['total'] for row in upcoming_amounts},
+                'nearest_payments': nearest_payments,
                 'this_month_count': this_month_count
             }
     except Exception as e:
