@@ -45,7 +45,7 @@ async def send_payment_reminder(bot: Bot, client, is_overdue: bool = False):
         name = client['name']
         amount = client['amount']
         currency = client['currency']
-        payment_status = client.get('payment_status', 'pending')
+        payment_status = client['payment_status'] if 'payment_status' in client.keys() else 'pending'
         next_payment_date = client['next_payment_date']
         
         # Parse date
@@ -100,7 +100,7 @@ async def send_payment_reminder(bot: Bot, client, is_overdue: bool = False):
         logger.info(f"Sent payment reminder to user {user_id} for client '{name}' (overdue: {days_overdue} days)")
         
     except Exception as e:
-        logger.error(f"Failed to send payment reminder to user {client.get('user_id')}: {e}")
+        logger.error(f"Failed to send payment reminder to user {client['user_id'] if 'user_id' in client.keys() else 'unknown'}: {e}")
 
 
 async def send_advance_notification(bot: Bot, client):
@@ -136,7 +136,7 @@ async def send_advance_notification(bot: Bot, client):
         logger.info(f"Sent advance notification to user {user_id} for client '{name}' ({days_until} days)")
         
     except Exception as e:
-        logger.error(f"Failed to send advance notification to user {client.get('user_id')}: {e}")
+        logger.error(f"Failed to send advance notification to user {client['user_id'] if 'user_id' in client.keys() else 'unknown'}: {e}")
 
 
 async def send_daily_summary(bot: Bot):

@@ -107,9 +107,10 @@ def format_client_info(client, show_details: bool = True) -> str:
     
     if show_details:
         info += f"🔄 Интервал: {interval_text}\n"
-        if client.get('category') and client['category'] != 'general':
+        keys = client.keys()
+        if 'category' in keys and client['category'] and client['category'] != 'general':
             info += f"🏷️ Категория: {client['category']}\n"
-        if client.get('notes'):
+        if 'notes' in keys and client['notes']:
             info += f"📝 Заметки: {client['notes']}\n"
     
     return info

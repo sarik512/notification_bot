@@ -902,8 +902,8 @@ async def export_data(message: types.Message):
             client['currency'],
             client['next_payment_date'],
             interval_desc,
-            client.get('category', 'general'),
-            client.get('payment_status', 'pending')
+            client['category'] if 'category' in client.keys() else 'general',
+            client['payment_status'] if 'payment_status' in client.keys() else 'pending'
         ])
     
     # Send as file
