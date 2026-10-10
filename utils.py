@@ -1,27 +1,22 @@
 """Utility functions for the bot"""
-from datetime import date, datetime, timedelta
+import html
+import io
+import math
+from datetime import date, datetime
 from typing import Optional, Tuple
 from aiogram import types
-from config import Config
 from logger import logger
 
+MAX_NAME_LENGTH = 100
+MAX_NOTES_LENGTH = 500
 
-async def check_user_access(message: types.Message) -> bool:
-    """Check if user has access to the bot"""
-    user_id = message.from_user.id
-    
-    if not Config.is_user_allowed(user_id):
-        await message.answer(
-            "⛔ <b>Доступ запрещен</b>\n\n"
-            "У вас нет прав для использования этого бота.\n"
-            f"Ваш ID: <code>{user_id}</code>\n\n"
-            "Обратитесь к администратору бота для получения доступа.",
-            parse_mode="HTML"
-        )
-        logger.warning(f"Unauthorized access attempt from user {user_id} (@{message.from_user.username})")
-        return False
-    
-    return True
+
+def esc(value) -> str:
+    """Escape user-supplied text for Telegram's HTML parse mode.
+
+    A bare '<' or '&' in a client name makes Telegram reject the whole message.
+    """
+    return html.escape(str(value), quote=False)
 
 
 def parse_date(date_str: str) -> Optional[date]:
@@ -66,11 +61,9 @@ def get_status_emoji(payment_status: str) -> str:
 
 def format_client_info(client, show_details: bool = True) -> str:
     """Format client information for display"""
-    from datetime import datetime
-    
     next_payment = datetime.strptime(client['next_payment_date'], "%Y-%m-%d").date()
     days_until = get_days_until(next_payment)
-    
+
     # Determine status
     if days_until < 0:
         status = f"⚠️ Просрочено на {abs(days_until)} дн."
@@ -84,47 +77,58 @@ def format_client_info(client, show_details: bool = True) -> str:
     else:
         status = f"✅ Через {days_until} дн."
         status_emoji = "🟢"
-    
-    # Interval description
-    interval_map = {
-        'monthly': 'месяц',
-        'weekly': 'неделя',
-        'yearly': 'год'
-    }
-    interval_word = interval_map.get(client['interval_type'], client['interval_type'])
-    
-    if client['interval_value'] == 1:
-        interval_text = f"Каждый {interval_word}"
-    else:
-        interval_text = f"Каждые {client['interval_value']} {interval_word}"
-    
+
     info = (
-        f"{status_emoji} <b>{client['name']}</b>\n"
+        f"{status_emoji} <b>{esc(client['name'])}</b>\n"
         f"💰 Сумма: {format_currency(client['amount'], client['currency'])}\n"
         f"📅 Следующий платеж: {format_date(next_payment)}\n"
         f"📊 Статус: {status}\n"
     )
-    
+
     if show_details:
-        info += f"🔄 Интервал: {interval_text}\n"
-        keys = client.keys()
-        if 'category' in keys and client['category'] and client['category'] != 'general':
-            info += f"🏷️ Категория: {client['category']}\n"
-        if 'notes' in keys and client['notes']:
-            info += f"📝 Заметки: {client['notes']}\n"
-    
+        info += f"🔄 Интервал: {get_interval_description(client['interval_type'], client['interval_value'])}\n"
+        if client['category'] and client['category'] != 'general':
+            info += f"🏷️ Категория: {esc(client['category'])}\n"
+        if client['notes']:
+            info += f"📝 Заметки: {esc(client['notes'])}\n"
+
     return info
+
+
+def validate_name(name_str: str) -> Tuple[bool, Optional[str], str]:
+    """Validate and normalize a client name"""
+    name = name_str.strip()
+    if len(name) < 2:
+        return False, None, "Имя слишком короткое. Введите хотя бы 2 символа."
+    if len(name) > MAX_NAME_LENGTH:
+        return False, None, f"Имя слишком длинное (максимум {MAX_NAME_LENGTH} символов)."
+    return True, name, ""
+
+
+def validate_notes(notes_str: str) -> Tuple[bool, str, str]:
+    """Validate notes; '-' means "no notes" """
+    notes = notes_str.strip()
+    if notes == '-':
+        return True, '', ""
+    if len(notes) > MAX_NOTES_LENGTH:
+        return False, '', f"Заметки слишком длинные (максимум {MAX_NOTES_LENGTH} символов)."
+    return True, notes, ""
 
 
 def validate_amount(amount_str: str) -> Tuple[bool, Optional[float], str]:
     """Validate and parse amount string"""
     try:
-        amount = float(amount_str.replace(',', '.').strip())
+        # Accept "5 000,50" as well as "5000.50" (regular and non-breaking spaces)
+        cleaned = amount_str.replace(',', '.').replace(' ', '').replace(' ', '').strip()
+        amount = float(cleaned)
+        # float() happily parses 'nan' and 'inf', and nan slips past every comparison
+        if not math.isfinite(amount):
+            return False, None, "Неверный формат суммы. Используйте числа, например: 5000 или 5000.50"
         if amount <= 0:
             return False, None, "Сумма должна быть больше нуля"
         if amount > 1_000_000_000:
             return False, None, "Сумма слишком большая"
-        return True, amount, ""
+        return True, round(amount, 2), ""
     except ValueError:
         return False, None, "Неверный формат суммы. Используйте числа, например: 5000 или 5000.50"
 
@@ -149,12 +153,12 @@ def get_interval_description(interval_type: str, interval_value: int) -> str:
         'weekly': ('неделю', 'недели', 'недель'),
         'yearly': ('год', 'года', 'лет')
     }
-    
+
     if interval_type not in interval_map:
         return f"{interval_value} {interval_type}"
-    
+
     words = interval_map[interval_type]
-    
+
     if interval_value == 1:
         return f"Каждый {words[0]}"
     elif interval_value % 10 == 1 and interval_value % 100 != 11:
@@ -168,14 +172,14 @@ def get_interval_description(interval_type: str, interval_value: int) -> str:
 async def send_long_message(message: types.Message, text: str, **kwargs):
     """Send long message, splitting if necessary"""
     max_length = 4096
-    
+
     if len(text) <= max_length:
         await message.answer(text, **kwargs)
     else:
         # Split by lines
         lines = text.split('\n')
         current_message = ""
-        
+
         for line in lines:
             if len(current_message) + len(line) + 1 <= max_length:
                 current_message += line + '\n'
@@ -183,80 +187,60 @@ async def send_long_message(message: types.Message, text: str, **kwargs):
                 if current_message:
                     await message.answer(current_message, **kwargs)
                 current_message = line + '\n'
-        
+
         if current_message:
             await message.answer(current_message, **kwargs)
 
 
-def generate_excel_report(clients: list, history: list, filename: str) -> bool:
-    """Generate Excel report with clients and payment history"""
+def generate_excel_report(clients: list, history: list) -> Optional[bytes]:
+    """Generate Excel report with clients and payment history.
+
+    Built in memory (no temp files to collide on or clean up). It is CPU-bound
+    and synchronous, so call it via asyncio.to_thread from handlers.
+    """
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill
-        
+        from openpyxl.utils import get_column_letter
+
         wb = Workbook()
-        
-        # --- Clients Sheet ---
-        ws_clients = wb.active
-        ws_clients.title = "Клиенты"
-        
-        # Headers
-        headers = ["ID", "Имя", "Сумма", "Валюта", "Категория", "Интервал", "След. платеж", "Заметки"]
-        for col, header in enumerate(headers, 1):
-            cell = ws_clients.cell(row=1, column=col, value=header)
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
-            
-        # Data
-        for row, client in enumerate(clients, 2):
-            ws_clients.cell(row=row, column=1, value=client['id'])
-            ws_clients.cell(row=row, column=2, value=client['name'])
-            ws_clients.cell(row=row, column=3, value=client['amount'])
-            ws_clients.cell(row=row, column=4, value=client['currency'])
-            ws_clients.cell(row=row, column=5, value=client['category'])
-            
-            # Format interval
-            interval = f"{client['interval_value']} {client['interval_type']}"
-            ws_clients.cell(row=row, column=6, value=interval)
-            
-            ws_clients.cell(row=row, column=7, value=client['next_payment_date'])
-            ws_clients.cell(row=row, column=8, value=client['notes'])
-            
-        # Adjust column widths
-        for col in range(1, 9):
-            ws_clients.column_dimensions[chr(64 + col)].width = 15
-        ws_clients.column_dimensions['B'].width = 30  # Name
-        ws_clients.column_dimensions['H'].width = 40  # Notes
-            
-        # --- History Sheet ---
-        ws_history = wb.create_sheet("История платежей")
-        
-        # Headers
-        headers = ["Дата", "Клиент", "Сумма", "Валюта", "Статус", "Заметки"]
-        for col, header in enumerate(headers, 1):
-            cell = ws_history.cell(row=1, column=col, value=header)
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
-            
-        # Data
-        for row, item in enumerate(history, 2):
-            ws_history.cell(row=row, column=1, value=item['payment_date'])
-            # Check if client_name exists (joined query)
-            name = item['client_name'] if 'client_name' in item.keys() else f"Client {item['client_id']}"
-            ws_history.cell(row=row, column=2, value=name)
-            ws_history.cell(row=row, column=3, value=item['amount'])
-            ws_history.cell(row=row, column=4, value=item['currency'])
-            ws_history.cell(row=row, column=5, value=item['status'])
-            ws_history.cell(row=row, column=6, value=item['notes'])
-            
-        # Adjust column widths
-        for col in range(1, 7):
-            ws_history.column_dimensions[chr(64 + col)].width = 15
-        ws_history.column_dimensions['B'].width = 30  # Client
-        ws_history.column_dimensions['F'].width = 40  # Notes
-        
-        wb.save(filename)
-        return True
+        header_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
+
+        def write_sheet(ws, headers, rows, widths):
+            for col, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col, value=header)
+                cell.font = Font(bold=True)
+                cell.fill = header_fill
+            for row_idx, values in enumerate(rows, 2):
+                for col, value in enumerate(values, 1):
+                    cell = ws.cell(row=row_idx, column=col, value=value)
+                    # A name or note starting with '=' would otherwise become a live formula
+                    if isinstance(value, str):
+                        cell.data_type = 's'
+            for col, width in enumerate(widths, 1):
+                ws.column_dimensions[get_column_letter(col)].width = width
+
+        write_sheet(
+            wb.active,
+            ["ID", "Имя", "Сумма", "Валюта", "Категория", "Интервал", "След. платеж", "Заметки"],
+            ([c['id'], c['name'], c['amount'], c['currency'], c['category'],
+              f"{c['interval_value']} {c['interval_type']}", c['next_payment_date'], c['notes']]
+             for c in clients),
+            [15, 30, 15, 15, 15, 15, 15, 40],
+        )
+        wb.active.title = "Клиенты"
+
+        write_sheet(
+            wb.create_sheet("История платежей"),
+            ["Дата", "Клиент", "Сумма", "Валюта", "Статус", "Заметки"],
+            ([h['payment_date'], h['client_name'], h['amount'], h['currency'], h['status'], h['notes']]
+             for h in history),
+            [15, 30, 15, 15, 15, 40],
+        )
+
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        return buffer.getvalue()
     except Exception as e:
         logger.error(f"Error generating Excel report: {e}")
-        return False
+        return None

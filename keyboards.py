@@ -4,7 +4,30 @@ from aiogram.types import (
     InlineKeyboardMarkup, 
     InlineKeyboardButton
 )
-from typing import List, Tuple
+from typing import List
+
+# Single source of truth for the choices: the keyboards below are built from
+# these, and handlers validate callback data against them.
+CURRENCIES = {
+    "RUB": "₽ RUB (Рубль)",
+    "USD": "$ USD (Доллар)",
+    "UZS": "🇺🇿 UZS (Сум)",
+}
+CATEGORIES = {
+    "business": "🏢 Бизнес",
+    "personal": "👤 Личное",
+    "vip": "⭐ VIP",
+    "test": "🧪 Тестовый",
+    "general": "📦 Общее",
+}
+INTERVAL_TYPES = {
+    "monthly": "📅 Ежемесячно",
+    "yearly": "📆 Ежегодно",
+    "weekly": "📋 Еженедельно",
+}
+
+# Telegram allows at most 100 buttons per inline keyboard
+CLIENTS_PER_PAGE = 20
 
 
 def get_main_keyboard():
@@ -13,6 +36,7 @@ def get_main_keyboard():
         keyboard=[
             [KeyboardButton(text="➕ Добавить клиента"), KeyboardButton(text="🔍 Поиск клиента")],
             [KeyboardButton(text="📋 Список клиентов"), KeyboardButton(text="💰 Отметить оплату")],
+            [KeyboardButton(text="✏️ Редактировать"), KeyboardButton(text="📜 История")],
             [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📥 Скачать отчет (Excel)")],
             [KeyboardButton(text="💾 Бэкап базы"), KeyboardButton(text="❌ Удалить клиента")]
         ],
@@ -20,32 +44,31 @@ def get_main_keyboard():
     )
 
 
+# Texts of the main-menu buttons; pressing one abandons any dialog in progress
+MENU_TEXTS = frozenset(button.text for row in get_main_keyboard().keyboard for button in row)
+
+
 def get_interval_type_keyboard():
     """Interval type selection keyboard"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📅 Ежемесячно", callback_data="interval_monthly")],
-        [InlineKeyboardButton(text="📆 Ежегодно", callback_data="interval_yearly")],
-        [InlineKeyboardButton(text="📋 Еженедельно", callback_data="interval_weekly")],
+        [InlineKeyboardButton(text=text, callback_data=f"interval_{key}")]
+        for key, text in INTERVAL_TYPES.items()
     ])
 
 
 def get_currency_keyboard():
     """Currency selection keyboard"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="₽ RUB (Рубль)", callback_data="curr_RUB")],
-        [InlineKeyboardButton(text="$ USD (Доллар)", callback_data="curr_USD")],
-        [InlineKeyboardButton(text="🇺🇿 UZS (Сум)", callback_data="curr_UZS")],
+        [InlineKeyboardButton(text=text, callback_data=f"curr_{key}")]
+        for key, text in CURRENCIES.items()
     ])
 
 
 def get_category_keyboard():
     """Category selection keyboard"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏢 Бизнес", callback_data="cat_business")],
-        [InlineKeyboardButton(text="👤 Личное", callback_data="cat_personal")],
-        [InlineKeyboardButton(text="⭐ VIP", callback_data="cat_vip")],
-        [InlineKeyboardButton(text="🧪 Тестовый", callback_data="cat_test")],
-        [InlineKeyboardButton(text="📦 Общее", callback_data="cat_general")],
+        [InlineKeyboardButton(text=text, callback_data=f"cat_{key}")]
+        for key, text in CATEGORIES.items()
     ])
 
 
@@ -68,11 +91,13 @@ def get_payment_status_keyboard(client_id: int):
     ])
 
 
-def get_client_list_keyboard(clients: List, action_prefix: str = "select"):
-    """Generate inline keyboard for client selection"""
-    keyboard = []
+def get_client_list_keyboard(clients: List, action_prefix: str = "select", page: int = 0):
+    """Inline keyboard for client selection, paginated to stay under Telegram's button limit"""
+    pages = max(1, -(-len(clients) // CLIENTS_PER_PAGE))
+    page = min(max(page, 0), pages - 1)
     
-    for client in clients:
+    keyboard = []
+    for client in clients[page * CLIENTS_PER_PAGE:(page + 1) * CLIENTS_PER_PAGE]:
         # Truncate name if too long
         name = client['name']
         if len(name) > 30:
@@ -84,6 +109,15 @@ def get_client_list_keyboard(clients: List, action_prefix: str = "select"):
                 callback_data=f"{action_prefix}_{client['id']}"
             )
         ])
+    
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"pg_{action_prefix}_{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="noop"))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"pg_{action_prefix}_{page + 1}"))
+        keyboard.append(nav)
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

@@ -1,8 +1,17 @@
 import asyncio
 import sys
+
+# Redirected output on Windows defaults to the ANSI code page (cp1251), where the
+# emoji in our log lines and warnings raise UnicodeEncodeError. Must run before
+# config/logger are imported, since they print and log at import time.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import ErrorEvent
 
 # Import configuration and logging first
 from config import Config
@@ -14,11 +23,24 @@ import database as db
 import scheduler
 
 
+async def on_error(event: ErrorEvent) -> bool:
+    """Log unhandled handler errors and tell the user instead of leaving them hanging"""
+    logger.error(f"Unhandled error while processing update: {event.exception}", exc_info=event.exception)
+    update = event.update
+    try:
+        if update.callback_query:
+            await update.callback_query.answer("❌ Произошла ошибка. Попробуйте ещё раз.", show_alert=True)
+        elif update.message:
+            await update.message.answer("❌ Произошла ошибка. Попробуйте ещё раз или нажмите /cancel")
+    except Exception:
+        pass  # the notification is best effort; the error is already logged
+    return True
+
+
 async def on_startup(bot: Bot):
     """Actions to perform on bot startup"""
     logger.info("=" * 60)
     logger.info("Bot is starting up...")
-    logger.info(f"Bot token: {Config.BOT_TOKEN[:10]}...")
     logger.info(f"Allowed users: {Config.ALLOWED_USERS if Config.ALLOWED_USERS else 'All users (no restrictions)'}")
     logger.info(f"Check time: {Config.CHECK_TIME_HOUR:02d}:{Config.CHECK_TIME_MINUTE:02d}")
     logger.info(f"Advance notification: {Config.ADVANCE_NOTIFICATION_DAYS} days")
@@ -99,6 +121,8 @@ async def main():
         # Register routers
         dp.include_router(handlers.router)
         
+        dp.errors.register(on_error)
+        
         # Register startup and shutdown handlers
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
@@ -110,10 +134,15 @@ async def main():
         print("📝 Логи сохраняются в:", Config.LOG_FILE)
         print("\nНажмите Ctrl+C для остановки бота\n")
         
-        await dp.start_polling(
-            bot,
-            allowed_updates=dp.resolve_used_update_types()
-        )
+        try:
+            await dp.start_polling(
+                bot,
+                allowed_updates=dp.resolve_used_update_types()
+            )
+        finally:
+            # The sqlite worker thread is non-daemon: left open, it keeps the
+            # process alive after a crash.
+            await db.close_db()
         
     except Exception as e:
         logger.error(f"Fatal error in main: {e}", exc_info=True)
